@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grush Live Capture</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1d2330; --muted: #6b7385;
+    --line: #e2e5ec; --accent: #2f5bea; --accent-d: #2447c0;
+    --rec: #d93a3a; --ok: #1f9d55;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.35rem; margin: 8px 0 2px; }
+  .sub { color: var(--muted); font-size: .9rem; margin-bottom: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;
+  }
+  .card h2 { font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); background: #fff; color: var(--text);
+    padding: 10px 14px; border-radius: 10px; min-height: 44px;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--accent-d); }
+  button.rec { background: var(--rec); border-color: var(--rec); color: #fff; }
+  .seg button { flex: 1 1 auto; }
+  .seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .modes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .modes button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .field { margin: 10px 0 0; }
+  .field label { display: flex; justify-content: space-between; font-size: .9rem; margin-bottom: 2px; }
+  .field output { color: var(--muted); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: .95rem; cursor: pointer; }
+  .check input { width: 20px; height: 20px; accent-color: var(--accent); }
+  .status { font-size: .9rem; margin-top: 10px; min-height: 1.3em; color: var(--muted); }
+  .status.err { color: var(--rec); }
+  .status.ok { color: var(--ok); }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #c3c8d4; margin-right: 6px; }
+  .dot.live { background: var(--ok); }
+  .dot.recording { background: var(--rec); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  audio { width: 100%; margin-top: 10px; }
+  .hint { font-size: .82rem; color: var(--muted); margin-top: 8px; }
+
+  .timer { font-size: 1.9rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .02em; margin-left: auto; }
+  .timer.on { color: var(--rec); }
+
+  .vu-wrap { margin-top: 12px; }
+  .vu-head { display: flex; justify-content: space-between; align-items: center; font-size: .82rem; color: var(--muted); margin-bottom: 4px; }
+  .vu-db { font-variant-numeric: tabular-nums; }
+  .clip { font-weight: 700; color: #fff; background: var(--rec); border-radius: 6px; padding: 1px 8px; visibility: hidden; }
+  .clip.on { visibility: visible; }
+  .vu {
+    position: relative; height: 16px; border-radius: 8px; overflow: hidden;
+    background: linear-gradient(90deg, #1f9d55 0, #1f9d55 70%, #e0a21a 70%, #e0a21a 90%, #d93a3a 90%, #d93a3a 100%);
+  }
+  .vu .cover { position: absolute; top: 0; right: 0; bottom: 0; width: 100%; background: #e9ebf1; transition: width .05s linear; }
+  .vu .peak { position: absolute; top: 0; bottom: 0; width: 3px; background: #1d2330; left: 0; opacity: 0; }
+  .vu-scale { position: relative; height: 14px; font-size: .7rem; color: var(--muted); }
+  .vu-scale span { position: absolute; transform: translateX(-50%); }
+
+  .dl-row { margin-top: 12px; }
+  .dl-row button { flex: 1 1 140px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Grush Live Capture</h1>
+  <div class="sub">Przechwytywanie dźwięku, obróbka na żywo i nagrywanie wyniku.</div>
+
+  <div class="card">
+    <h2>1. Źródło i przechwytywanie</h2>
+    <div class="row seg" id="srcSeg">
+      <button data-src="system" class="on">Dźwięk systemu / karty</button>
+      <button data-src="mic">Mikrofon</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnStart" class="primary">▶ START CAPTURE</button>
+      <button id="btnStop" disabled>■ STOP CAPTURE</button>
+    </div>
+    <label class="check" style="margin-top:12px">
+      <input type="checkbox" id="monitor"> Odsłuch przetworzonego dźwięku (tylko na słuchawkach!)
+    </label>
+    <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Gotowe. Wybierz źródło i naciśnij START CAPTURE.</span></div>
+    <div class="hint">Dźwięk systemu: w oknie przeglądarki wybierz kartę/ekran i zaznacz „Udostępnij dźwięk”. Działa w Chrome/Edge na komputerze.</div>
+  </div>
+
+  <div class="card">
+    <h2>2. Tryb przetwarzania</h2>
+    <div class="modes" id="modes"></div>
+  </div>
+
+  <div class="card">
+    <h2>3. Analog Finish</h2>
+    <div class="field"><label>Drive <output id="oDrive">0%</output></label><input type="range" id="drive" min="0" max="100" value="0"></div>
+    <div class="field"><label>Warmth <output id="oWarmth">0%</output></label><input type="range" id="warmth" min="0" max="100" value="0"></div>
+  </div>
+
+  <div class="card">
+    <h2>4. Live Voice FX – echo</h2>
+    <label class="check"><input type="checkbox" id="echoOn"> Echo włączone</label>
+    <div class="field"><label>Czas <output id="oTime">250 ms</output></label><input type="range" id="echoTime" min="50" max="1000" value="250"></div>
+    <div class="field"><label>Feedback <output id="oFb">35%</output></label><input type="range" id="echoFb" min="0" max="85" value="35"></div>
+    <div class="field"><label>Dry / Wet <output id="oMix">30% wet</output></label><input type="range" id="echoMix" min="0" max="100" value="30"></div>
+  </div>
+
+  <div class="card">
+    <h2>5. Nagrywanie wyniku</h2>
+    <div class="row">
+      <button id="btnRecStart" class="rec" disabled>● Start Nagrywania</button>
+      <button id="btnRecStop" disabled>■ Stop Nagrywania</button>
+      <span class="timer" id="recTime">00:00</span>
+    </div>
+
+    <div class="vu-wrap">
+      <div class="vu-head">
+        <span>Poziom sygnału</span>
+        <span><span class="vu-db" id="vuDb">−∞ dB</span> <span class="clip" id="clip">CLIP</span></span>
+      </div>
+      <div class="vu"><div class="cover" id="vuCover"></div><div class="peak" id="vuPeak"></div></div>
+      <div class="vu-scale">
+        <span style="left:0%">−60</span><span style="left:50%">−30</span>
+        <span style="left:80%">−12</span><span style="left:95%">−3</span><span style="left:100%;transform:translateX(-100%)">0 dB</span>
+      </div>
+    </div>
+
+    <div id="recOut"></div>
+    <div class="hint">Nagrywanie działa, gdy przechwytywanie jest włączone. Po zatrzymaniu pobierzesz plik WAV lub MP3. MP3 wymaga internetu przy pierwszym użyciu (wczytanie enkodera), WAV działa zawsze offline.</div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var TC = 0.015;               // stała czasowa setTargetAtTime
+  var MAX_REC_SEC = 30 * 60;    // limit nagrania (ochrona pamięci)
+
+  var MODES = [
+    { name: 'Bypass',            hp: 10,  ls: 0,  m1: 0,    m2: 0,    hs: 0,  lp: 20000, th: 0,   ra: 1,  mk: 1 },
+    { name: 'Warm / Chest',      hp: 60,  ls: 4,  m1: -2,   m2: -1.5, hs: -1, lp: 16000, th: -24, ra: 2,  mk: 1.1 },
+    { name: 'Broadcast Punch',   hp: 80,  ls: 2,  m1: -1,   m2: 3,    hs: 1,  lp: 18000, th: -22, ra: 4,  mk: 1.3 },
+    { name: 'Air / Crisp',       hp: 90,  ls: -1, m1: -2.5, m2: -1,   hs: 5,  lp: 20000, th: -20, ra: 2,  mk: 1.0 },
+    { name: 'Telephone / Lo-Fi', hp: 400, ls: -6, m1: 4,    m2: 0,    hs: -6, lp: 3400,  th: -20, ra: 3,  mk: 1.4 },
+    { name: 'Radio Limiter',     hp: 100, ls: 1,  m1: 0,    m2: 2,    hs: 1,  lp: 12000, th: -16, ra: 20, mk: 1.6 }
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  var ctx = null, nodes = null;
+  var source = 'system', modeIdx = 0;
+  var stream = null, srcNode = null, capturing = false;
+
+  // nagrywanie PCM
+  var recording = false, recL = [], recR = [], recFrames = 0, recRate = 44100;
+  var recTimer = null, recStart = 0, recUrl = null, lastRec = null;
+
+  // miernik
+  var meterRaf = 0, meterBuf = null, peakHold = 0, peakHoldTs = 0, clipUntil = 0;
+
+  /* ---------- AudioContext: zawsze zdefiniowany ---------- */
+  function getCtx() {
+    if (!ctx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) throw new Error('Ta przeglądarka nie obsługuje Web Audio API.');
+      ctx = new AC({ latencyHint: 'interactive' });
+      buildGraph();
+    }
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) { /* ignoruj */ } }
+    return ctx;
+  }
+
+  function makeCurve(drive, warmth) {
+    var n = 2048, c = new Float32Array(n);
+    var k = 1 + drive / 100 * 9;
+    var bias = warmth / 100 * 0.25;
+    var off = Math.tanh(k * bias);
+    var norm = Math.max(Math.tanh(k * (1 + bias)) - off, Math.abs(Math.tanh(k * (-1 + bias)) - off)) || 1;
+    for (var i = 0; i < n; i++) {
+      var x = i * 2 / (n - 1) - 1;
+      c[i] = (Math.tanh(k * (x + bias)) - off) / norm;
+    }
+    return c;
+  }
+
+  function buildGraph() {
+    var n = {};
+    n.inGain = ctx.createGain();
+    n.hp = ctx.createBiquadFilter(); n.hp.type = 'highpass'; n.hp.Q.value = 0.7;
+    n.ls = ctx.createBiquadFilter(); n.ls.type = 'lowshelf'; n.ls.frequency.value = 200;
+    n.m1 = ctx.createBiquadFilter(); n.m1.type = 'peaking'; n.m1.frequency.value = 1200; n.m1.Q.value = 1;
+    n.m2 = ctx.createBiquadFilter(); n.m2.type = 'peaking'; n.m2.frequency.value = 3000; n.m2.Q.value = 1;
+    n.hs = ctx.createBiquadFilter(); n.hs.type = 'highshelf'; n.hs.frequency.value = 9000;
+    n.lp = ctx.createBiquadFilter(); n.lp.type = 'lowpass'; n.lp.Q.value = 0.7; n.lp.frequency.value = 20000;
+    n.comp = ctx.createDynamicsCompressor();
+    n.comp.knee.value = 6; n.comp.attack.value = 0.005; n.comp.release.value = 0.12;
+    n.makeup = ctx.createGain();
+
+    n.shaper = ctx.createWaveShaper();
+    n.shaper.curve = makeCurve(0, 0);
+    n.shaper.oversample = '2x';
+    n.warmShelf = ctx.createBiquadFilter(); n.warmShelf.type = 'lowshelf'; n.warmShelf.frequency.value = 250;
+    n.shaperTrim = ctx.createGain();
+
+    n.echoDry = ctx.createGain();
+    n.echoWet = ctx.createGain(); n.echoWet.gain.value = 0;
+    n.delay = ctx.createDelay(2); n.delay.delayTime.value = 0.25;
+    n.fb = ctx.createGain(); n.fb.gain.value = 0.35;
+    n.sum = ctx.createGain();
+
+    n.master = ctx.createGain();
+    n.analyser = ctx.createAnalyser(); n.analyser.fftSize = 1024;
+    n.monitor = ctx.createGain(); n.monitor.gain.value = 0;
+
+    // przechwytywanie PCM do WAV/MP3 (ScriptProcessor – działa w każdej przeglądarce)
+    n.rec = ctx.createScriptProcessor(4096, 2, 2);
+    n.rec.onaudioprocess = onRecProcess;
+    n.recMute = ctx.createGain(); n.recMute.gain.value = 0;
+
+    n.inGain.connect(n.hp); n.hp.connect(n.ls); n.ls.connect(n.m1); n.m1.connect(n.m2);
+    n.m2.connect(n.hs); n.hs.connect(n.lp); n.lp.connect(n.comp); n.comp.connect(n.makeup);
+    n.makeup.connect(n.shaper); n.shaper.connect(n.warmShelf); n.warmShelf.connect(n.shaperTrim);
+
+    n.shaperTrim.connect(n.echoDry); n.echoDry.connect(n.sum);
+    n.shaperTrim.connect(n.delay); n.delay.connect(n.echoWet); n.echoWet.connect(n.sum);
+    n.delay.connect(n.fb); n.fb.connect(n.delay);
+
+    n.sum.connect(n.master);
+    n.master.connect(n.analyser);
+    n.master.connect(n.rec); n.rec.connect(n.recMute); n.recMute.connect(ctx.destination);
+    n.master.connect(n.monitor); n.monitor.connect(ctx.destination);
+
+    nodes = n;
+    meterBuf = new Float32Array(n.analyser.fftSize);
+    applyMode(modeIdx);
+    applyAnalog();
+    applyEcho();
+    applyMonitor();
+  }
+
+  function setP(param, v) { param.setTargetAtTime(v, ctx.currentTime, TC); }
+
+  function applyMode(i) {
+    modeIdx = i;
+    var m = MODES[i];
+    Array.prototype.forEach.call($('modes').children, function (b, j) { b.classList.toggle('on', j === i); });
+    if (!nodes) return;
+    setP(nodes.hp.frequency, m.hp);
+    setP(nodes.ls.gain, m.ls);
+    setP(nodes.m1.gain, m.m1);
+    setP(nodes.m2.gain, m.m2);
+    setP(nodes.hs.gain, m.hs);
+    setP(nodes.lp.frequency, m.lp);
+    setP(nodes.comp.threshold, m.th);
+    setP(nodes.comp.ratio, m.ra);
+    setP(nodes.makeup.gain, m.mk);
+  }
+
+  function applyAnalog() {
+    var d = +$('drive').value, w = +$('warmth').value;
+    $('oDrive').textContent = d + '%';
+    $('oWarmth').textContent = w + '%';
+    if (!nodes) return;
+    nodes.shaper.curve = makeCurve(d, w);
+    setP(nodes.warmShelf.gain, w / 100 * 5);
+    setP(nodes.shaperTrim.gain, 1 - d / 100 * 0.25);
+  }
+
+  function applyEcho() {
+    var on = $('echoOn').checked;
+    var t = +$('echoTime').value, fb = +$('echoFb').value, mix = +$('echoMix').value;
+    $('oTime').textContent = t + ' ms';
+    $('oFb').textContent = fb + '%';
+    $('oMix').textContent = mix + '% wet';
+    if (!nodes) return;
+    setP(nodes.delay.delayTime, t / 1000);
+    setP(nodes.fb.gain, fb / 100);
+    setP(nodes.echoWet.gain, on ? mix / 100 : 0);
+    setP(nodes.echoDry.gain, on ? 1 - mix / 100 * 0.5 : 1);
+  }
+
+  function applyMonitor() {
+    if (!nodes) return;
+    setP(nodes.monitor.gain, $('monitor').checked ? 1 : 0);
+  }
+
+  /* ---------- Status / przyciski ---------- */
+  function setStatus(text, kind) {
+    $('statusText').textContent = text;
+    $('status').className = 'status' + (kind ? ' ' + kind : '');
+  }
+  function setDot(cls) { $('dot').className = 'dot' + (cls ? ' ' + cls : ''); }
+
+  function updateButtons() {
+    $('btnStart').disabled = capturing;
+    $('btnStop').disabled = !capturing;
+    $('btnRecStart').disabled = !capturing || recording;
+    $('btnRecStop').disabled = !recording;
+    Array.prototype.forEach.call($('srcSeg').children, function (b) { b.disabled = capturing; });
+  }
+
+  /* ---------- Przechwytywanie ---------- */
+  function startCapture() {
+    var c;
+    try { c = getCtx(); } catch (e) { setStatus(e.message, 'err'); return; }
+    var off = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    var p;
+    if (source === 'mic') {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus('Mikrofon niedostępny w tej przeglądarce (wymagane https lub localhost).', 'err'); return;
+      }
+      p = navigator.mediaDevices.getUserMedia({ audio: off, video: false });
+    } else {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        setStatus('Przechwytywanie dźwięku systemu nie jest obsługiwane (użyj Chrome/Edge na komputerze).', 'err'); return;
+      }
+      p = navigator.mediaDevices.getDisplayMedia({ video: true, audio: off });
+    }
+    setStatus('Czekam na zgodę przeglądarki…');
+    p.then(function (s) {
+      var audioTracks = s.getAudioTracks();
+      s.getVideoTracks().forEach(function (t) { t.stop(); s.removeTrack(t); });
+      if (!audioTracks.length) {
+        s.getTracks().forEach(function (t) { t.stop(); });
+        setStatus('Nie wykryto dźwięku. Zaznacz „Udostępnij dźwięk” w oknie wyboru.', 'err');
+        return;
+      }
+      stream = new MediaStream(audioTracks);
+      audioTracks[0].addEventListener('ended', function () { stopCapture('Źródło dźwięku zostało zakończone.'); });
+      srcNode = c.createMediaStreamSource(stream);
+      srcNode.connect(nodes.inGain);
+      capturing = true;
+      setDot('live');
+      setStatus('Przechwytywanie aktywne – dźwięk jest przetwarzany na żywo.', 'ok');
+      startMeter();
+      updateButtons();
+    }).catch(function (err) {
+      var msg = err && err.name === 'NotAllowedError' ? 'Brak zgody na przechwytywanie.' :
+                err && err.name === 'NotFoundError' ? 'Nie znaleziono urządzenia audio.' :
+                'Błąd przechwytywania: ' + (err && err.message ? err.message : err);
+      setStatus(msg, 'err');
+      setDot('');
+    });
+  }
+
+  function stopCapture(msg) {
+    if (recording) stopRecording();
+    if (srcNode) { try { srcNode.disconnect(); } catch (e) { /* ignoruj */ } srcNode = null; }
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    capturing = false;
+    stopMeter();
+    setDot('');
+    if (!lastRec || !$('recOut').innerHTML) setStatus(msg || 'Przechwytywanie zatrzymane.');
+    else setStatus((msg ? msg + ' ' : '') + 'Nagranie gotowe do pobrania.', 'ok');
+    updateButtons();
+  }
+
+  /* ---------- Miernik poziomu (RMS + szczyt + CLIP) ---------- */
+  function dbToPos(db) { return Math.max(0, Math.min(1, (db + 60) / 60)); }
+
+  function startMeter() {
+    stopMeter();
+    (function loop() {
+      if (!nodes || !capturing) return;
+      nodes.analyser.getFloatTimeDomainData(meterBuf);
+      var peak = 0, sum = 0;
+      for (var i = 0; i < meterBuf.length; i++) {
+        var v = meterBuf[i], a = v < 0 ? -v : v;
+        if (a > peak) peak = a;
+        sum += v * v;
+      }
+      var rms = Math.sqrt(sum / meterBuf.length);
+      var now = Date.now();
+      var rmsDb = rms > 0 ? 20 * Math.log10(rms) : -90;
+      var peakDb = peak > 0 ? 20 * Math.log10(peak) : -90;
+
+      if (peak >= peakHold || now - peakHoldTs > 1200) { peakHold = peak; peakHoldTs = now; }
+      if (peak >= 0.99) clipUntil = now + 1500;
+
+      $('vuCover').style.width = ((1 - dbToPos(rmsDb)) * 100) + '%';
+      var pk = $('vuPeak');
+      var hdb = peakHold > 0 ? 20 * Math.log10(peakHold) : -90;
+      pk.style.left = 'calc(' + (dbToPos(hdb) * 100) + '% - 3px)';
+      pk.style.opacity = peakHold > 0.001 ? '1' : '0';
+      $('vuDb').textContent = peakDb > -80 ? (peakDb.toFixed(1).replace('-', '−') + ' dB') : '−∞ dB';
+      $('clip').className = 'clip' + (now < clipUntil ? ' on' : '');
+      meterRaf = requestAnimationFrame(loop);
+    })();
+  }
+
+  function stopMeter() {
+    cancelAnimationFrame(meterRaf);
+    $('vuCover').style.width = '100%';
+    $('vuPeak').style.opacity = '0';
+    $('vuDb').textContent = '−∞ dB';
+    $('clip').className = 'clip';
+    peakHold = 0;
+  }
+
+  /* ---------- Nagrywanie PCM ---------- */
+  function toInt16(f32) {
+    var out = new Int16Array(f32.length);
+    for (var i = 0; i < f32.length; i++) {
+      var s = f32[i];
+      if (s > 1) s = 1; else if (s < -1) s = -1;
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return out;
+  }
+
+  function onRecProcess(e) {
+    if (!recording) return;
+    var inp = e.inputBuffer;
+    var l = inp.getChannelData(0);
+    var r = inp.numberOfChannels > 1 ? inp.getChannelData(1) : l;
+    recL.push(toInt16(l));
+    recR.push(toInt16(r));
+    recFrames += l.length;
+  }
+
+  function fmtTime(s) {
+    s = Math.max(0, Math.floor(s));
+    return ('0' + Math.floor(s / 60)).slice(-2) + ':' + ('0' + (s % 60)).slice(-2);
+  }
+
+  function startRecording() {
+    if (!capturing || !nodes || recording) return;
+    clearOutput();
+    recL = []; recR = []; recFrames = 0;
+    recRate = ctx.sampleRate;
+    recStart = Date.now();
+    recording = true;
+    $('recTime').textContent = '00:00';
+    $('recTime').className = 'timer on';
+    recTimer = setInterval(function () {
+      var sec = (Date.now() - recStart) / 1000;
+      $('recTime').textContent = fmtTime(sec);
+      if (sec >= MAX_REC_SEC) { stopRecording(); setStatus('Osiągnięto limit 30 minut – nagranie zatrzymane.', 'ok'); }
+    }, 250);
+    setDot('recording');
+    setStatus('Nagrywanie w toku…', 'ok');
+    updateButtons();
+  }
+
+  function stopRecording() {
+    if (!recording) return;
+    recording = false;
+    clearInterval(recTimer);
+    $('recTime').className = 'timer';
+    setDot(capturing ? 'live' : '');
+    updateButtons();
+    finishRecording();
+  }
+
+  /* ---------- WAV ---------- */
+  function buildWav(chL, chR, frames, rate) {
+    var bytes = 44 + frames * 4;
+    var buf = new ArrayBuffer(bytes);
+    var v = new DataView(buf);
+    function str(off, s) { for (var i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); }
+    str(0, 'RIFF'); v.setUint32(4, bytes - 8, true); str(8, 'WAVE');
+    str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, frames * 4, true);
+    var off = 44;
+    for (var c = 0; c < chL.length; c++) {
+      var a = chL[c], b = chR[c];
+      for (var i = 0; i < a.length; i++) {
+        v.setInt16(off, a[i], true); v.setInt16(off + 2, b[i], true);
+        off += 4;
+      }
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+
+  /* ---------- MP3 (lamejs wczytywany z CDN dopiero przy pierwszym użyciu) ---------- */
+  var LAME_URLS = [
+    'https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js',
+    'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js'
+  ];
+  function loadLame() {
+    return new Promise(function (resolve, reject) {
+      if (window.lamejs && window.lamejs.Mp3Encoder) { resolve(); return; }
+      var i = 0;
+      (function next() {
+        if (i >= LAME_URLS.length) { reject(new Error('Nie udało się wczytać enkodera MP3 (brak internetu?). Pobierz WAV.')); return; }
+        var s = document.createElement('script');
+        s.src = LAME_URLS[i++];
+        s.onload = function () {
+          if (window.lamejs && window.lamejs.Mp3Encoder) resolve(); else next();
+        };
+        s.onerror = function () { s.remove(); next(); };
+        document.head.appendChild(s);
+      })();
+    });
+  }
+
+  function encodeMp3(rec, onProgress) {
+    return loadLame().then(function () {
+      return new Promise(function (resolve, reject) {
+        var enc;
+        try { enc = new window.lamejs.Mp3Encoder(2, rec.rate, 128); } catch (e) { reject(e); return; }
+        var L = joinChunks(rec.L, rec.frames), R = joinChunks(rec.R, rec.frames);
+        var BLOCK = 1152, parts = [], pos = 0, batch = 0;
+        function work() {
+          try {
+            var t0 = Date.now();
+            while (pos < rec.frames && Date.now() - t0 < 30) {
+              var end = Math.min(pos + BLOCK, rec.frames);
+              var out = enc.encodeBuffer(L.subarray(pos, end), R.subarray(pos, end));
+              if (out.length) parts.push(new Int8Array(out));
+              pos = end; batch++;
+            }
+            if (onProgress) onProgress(pos / rec.frames);
+            if (pos < rec.frames) { setTimeout(work, 0); return; }
+            var tail = enc.flush();
+            if (tail.length) parts.push(new Int8Array(tail));
+            resolve(new Blob(parts, { type: 'audio/mpeg' }));
+          } catch (e) { reject(e); }
+        }
+        work();
+      });
+    });
+  }
+
+  function joinChunks(chunks, frames) {
+    var out = new Int16Array(frames), off = 0;
+    for (var i = 0; i < chunks.length; i++) { out.set(chunks[i], off); off += chunks[i].length; }
+    return out;
+  }
+
+  /* ---------- Pobieranie ---------- */
+  function stamp() {
+    var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
+
+  function saveBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 4000);
+  }
+
+  function clearOutput() {
+    if (recUrl) { URL.revokeObjectURL(recUrl); recUrl = null; }
+    lastRec = null;
+    $('recOut').innerHTML = '';
+  }
+
+  function finishRecording() {
+    if (!recFrames) { setStatus('Nagranie jest puste.', 'err'); return; }
+    lastRec = { L: recL, R: recR, frames: recFrames, rate: recRate, name: 'grusz-rec-' + stamp(), wav: null };
+    recL = []; recR = [];
+    lastRec.wav = buildWav(lastRec.L, lastRec.R, lastRec.frames, lastRec.rate);
+    recUrl = URL.createObjectURL(lastRec.wav);
+    $('recOut').innerHTML =
+      '<audio controls src="' + recUrl + '"></audio>' +
+      '<div class="row dl-row">' +
+      '<button class="primary" id="dlWav">⬇ Pobierz WAV</button>' +
+      '<button class="primary" id="dlMp3">⬇ Pobierz MP3</button></div>';
+    $('dlWav').addEventListener('click', function () {
+      saveBlob(lastRec.wav, lastRec.name + '.wav');
+      setStatus('Zapisano: ' + lastRec.name + '.wav', 'ok');
+    });
+    $('dlMp3').addEventListener('click', downloadMp3);
+    setStatus('Nagranie gotowe (' + fmtTime(lastRec.frames / lastRec.rate) + '). Pobierz WAV lub MP3.', 'ok');
+  }
+
+  function downloadMp3() {
+    var rec = lastRec, btn = $('dlMp3');
+    if (!rec) return;
+    if (rec.mp3) { saveBlob(rec.mp3, rec.name + '.mp3'); setStatus('Zapisano: ' + rec.name + '.mp3', 'ok'); return; }
+    btn.disabled = true;
+    btn.textContent = 'Wczytuję enkoder MP3…';
+    encodeMp3(rec, function (p) { btn.textContent = 'Kodowanie MP3… ' + Math.round(p * 100) + '%'; })
+      .then(function (blob) {
+        rec.mp3 = blob;
+        btn.disabled = false;
+        btn.textContent = '⬇ Pobierz MP3';
+        saveBlob(blob, rec.name + '.mp3');
+        setStatus('Zapisano: ' + rec.name + '.mp3', 'ok');
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        btn.textContent = '⬇ Pobierz MP3';
+        setStatus((err && err.message) || 'Błąd kodowania MP3.', 'err');
+      });
+  }
+
+  /* ---------- Start UI ---------- */
+  function init() {
+    var box = $('modes');
+    MODES.forEach(function (m, i) {
+      var b = document.createElement('button');
+      b.textContent = m.name;
+      b.addEventListener('click', function () { applyMode(i); });
+      box.appendChild(b);
+    });
+    applyMode(0);
+
+    Array.prototype.forEach.call($('srcSeg').children, function (b) {
+      b.addEventListener('click', function () {
+        if (capturing) return;
+        source = b.dataset.src;
+        Array.prototype.forEach.call($('srcSeg').children, function (x) { x.classList.toggle('on', x === b); });
+      });
+    });
+
+    $('btnStart').addEventListener('click', startCapture);
+    $('btnStop').addEventListener('click', function () { stopCapture(); });
+    $('btnRecStart').addEventListener('click', startRecording);
+    $('btnRecStop').addEventListener('click', stopRecording);
+    $('monitor').addEventListener('change', applyMonitor);
+    ['drive', 'warmth'].forEach(function (id) { $(id).addEventListener('input', applyAnalog); });
+    ['echoOn', 'echoTime', 'echoFb', 'echoMix'].forEach(function (id) {
+      $(id).addEventListener('input', applyEcho);
+      $(id).addEventListener('change', applyEcho);
+    });
+
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && ctx && ctx.state === 'suspended' && capturing) { try { ctx.resume(); } catch (e) { /* ignoruj */ } }
+    });
+    updateButtons();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+</body>
+</html>
